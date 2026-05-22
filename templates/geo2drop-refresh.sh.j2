@@ -1,0 +1,251 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# geo2drop-refresh - reconcile a firewalld ipset of country IP ranges.
+#
+# Native port of m0zgen/geo2drop. Reads /etc/geo2drop/geo2drop.conf, fetches
+# zone data (online/archive/local), and rebuilds the ipset + drop-zone binding
+# only when the desired entry set differs from what is currently applied.
+#
+# Exit codes:
+#   0  - success
+#   1  - configuration / dependency / network failure
+#
+# Prints "CHANGED" or "UNCHANGED" on the last stdout line so Ansible can mark
+# the task changed.
+
+set -euo pipefail
+
+CONFIG="${GEO2DROP_CONF:-/etc/geo2drop/geo2drop.conf}"
+FORCE=0
+
+usage() {
+    cat <<EOF
+Usage: $0 [--force] [--config PATH]
+
+  --force            Rebuild the ipset even if entries are unchanged.
+  --config PATH      Override config path (default: ${CONFIG}).
+  -h, --help         Show this help.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --force) FORCE=1 ;;
+        --config) CONFIG="$2"; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+    esac
+    shift
+done
+
+if [[ ! -r "${CONFIG}" ]]; then
+    echo "ERROR: cannot read config ${CONFIG}" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+. "${CONFIG}"
+
+: "${COUNTRIES:?COUNTRIES must be set in ${CONFIG}}"
+: "${IPSET_NAME:?IPSET_NAME must be set in ${CONFIG}}"
+: "${IPSET_TYPE:=hash:net}"
+: "${IPSET_FAMILY:=inet}"
+: "${IPSET_MAXELEM:=131072}"
+: "${IPSET_HASHSIZE:=4096}"
+: "${FIREWALLD_ZONE:=drop}"
+: "${SOURCE_MODE:=online}"
+: "${IPDENY_URL:=https://www.ipdeny.com}"
+: "${GITHUB_ARCHIVE_URL:=https://github.com/m0zgen/geo2drop/raw/data/all-zones.tar.gz}"
+: "${ARCHIVE_FALLBACK_GITHUB:=true}"
+: "${DOWNLOAD_TIMEOUT:=30}"
+: "${STATE_DIR:=/var/lib/geo2drop}"
+: "${ZONES_DIR:=${STATE_DIR}/zones}"
+: "${ARCHIVE_DIR:=${STATE_DIR}/archive}"
+
+STATE_FILE="${STATE_DIR}/applied.sha256"
+DESIRED_FILE="$(mktemp -t geo2drop.XXXXXX)"
+trap 'rm -f "${DESIRED_FILE}"' EXIT
+
+log() { echo "[geo2drop] $*"; }
+die() { echo "[geo2drop] ERROR: $*" >&2; exit 1; }
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+require_cmd curl
+require_cmd tar
+require_cmd firewall-cmd
+require_cmd systemctl
+require_cmd sha256sum
+require_cmd sort
+require_cmd grep
+
+mkdir -p "${STATE_DIR}" "${ZONES_DIR}" "${ARCHIVE_DIR}"
+
+if ! systemctl -q is-active firewalld.service; then
+    die "firewalld.service is not active"
+fi
+
+is_url_available() {
+    curl -sSfI --max-time "${DOWNLOAD_TIMEOUT}" "$1" >/dev/null 2>&1
+}
+
+fetch_online() {
+    is_url_available "${IPDENY_URL}" \
+        || die "ipdeny.com is not reachable (source=online)"
+    local country
+    for country in ${COUNTRIES}; do
+        local url="${IPDENY_URL}/ipblocks/data/countries/${country}.zone"
+        local dest="${ZONES_DIR}/${country}.zone"
+        log "downloading ${country} from ${url}"
+        if ! curl -sSf --max-time "${DOWNLOAD_TIMEOUT}" "${url}" -o "${dest}.new"; then
+            die "failed to download ${url}"
+        fi
+        mv -f "${dest}.new" "${dest}"
+    done
+}
+
+fetch_archive() {
+    local archive="${ARCHIVE_DIR}/all-zones.tar.gz"
+    local src=""
+    if is_url_available "${IPDENY_URL}/ipblocks/data/countries/all-zones.tar.gz"; then
+        src="${IPDENY_URL}/ipblocks/data/countries/all-zones.tar.gz"
+    elif [[ "${ARCHIVE_FALLBACK_GITHUB}" == "true" ]] \
+        && is_url_available "${GITHUB_ARCHIVE_URL}"; then
+        log "ipdeny.com unreachable; falling back to GitHub mirror"
+        src="${GITHUB_ARCHIVE_URL}"
+    else
+        die "no reachable archive source (ipdeny + github both unavailable)"
+    fi
+
+    log "downloading archive from ${src}"
+    if ! curl -sSfL --max-time "$((DOWNLOAD_TIMEOUT * 4))" "${src}" -o "${archive}.new"; then
+        die "failed to download ${src}"
+    fi
+    mv -f "${archive}.new" "${archive}"
+
+    log "extracting archive to ${ZONES_DIR}"
+    tar -xzf "${archive}" -C "${ZONES_DIR}"
+}
+
+fetch_zones() {
+    case "${SOURCE_MODE}" in
+        online)  fetch_online ;;
+        archive) fetch_archive ;;
+        local)   log "source=local; using existing files in ${ZONES_DIR}" ;;
+        *) die "invalid SOURCE_MODE=${SOURCE_MODE}" ;;
+    esac
+}
+
+build_desired_entries() {
+    local country missing=0
+    : > "${DESIRED_FILE}"
+    for country in ${COUNTRIES}; do
+        local f="${ZONES_DIR}/${country}.zone"
+        if [[ ! -s "${f}" ]]; then
+            log "WARN: zone file missing or empty for '${country}' (${f})"
+            missing=$((missing + 1))
+            continue
+        fi
+        # Strip comments and blank lines.
+        grep -Ev '^[[:space:]]*(#|$)' "${f}" >> "${DESIRED_FILE}" || true
+    done
+    if [[ ! -s "${DESIRED_FILE}" ]]; then
+        die "no entries collected (${missing} country file(s) missing)"
+    fi
+    sort -u -o "${DESIRED_FILE}" "${DESIRED_FILE}"
+}
+
+desired_hash() { sha256sum "${DESIRED_FILE}" | awk '{print $1}'; }
+
+ipset_exists() {
+    firewall-cmd --permanent --get-ipsets 2>/dev/null \
+        | tr ' ' '\n' | grep -Fxq "${IPSET_NAME}"
+}
+
+drop_source_attached() {
+    firewall-cmd --permanent --zone="${FIREWALLD_ZONE}" --list-sources 2>/dev/null \
+        | tr ' ' '\n' | grep -Fxq "ipset:${IPSET_NAME}"
+}
+
+delete_ipset() {
+    if drop_source_attached; then
+        log "detaching ipset:${IPSET_NAME} from zone ${FIREWALLD_ZONE}"
+        firewall-cmd --permanent --zone="${FIREWALLD_ZONE}" \
+            --remove-source="ipset:${IPSET_NAME}" >/dev/null
+        firewall-cmd --reload >/dev/null
+    fi
+    if ipset_exists; then
+        log "deleting ipset ${IPSET_NAME}"
+        firewall-cmd --permanent --delete-ipset="${IPSET_NAME}" >/dev/null
+        firewall-cmd --reload >/dev/null
+    fi
+}
+
+create_ipset() {
+    log "creating ipset ${IPSET_NAME} (${IPSET_TYPE}, family=${IPSET_FAMILY}, hashsize=${IPSET_HASHSIZE}, maxelem=${IPSET_MAXELEM})"
+    firewall-cmd --permanent \
+        --new-ipset="${IPSET_NAME}" \
+        --type="${IPSET_TYPE}" \
+        --option="family=${IPSET_FAMILY}" \
+        --option="hashsize=${IPSET_HASHSIZE}" \
+        --option="maxelem=${IPSET_MAXELEM}" >/dev/null
+    firewall-cmd --reload >/dev/null
+}
+
+populate_ipset() {
+    log "loading $(wc -l < "${DESIRED_FILE}") entries into ${IPSET_NAME}"
+    firewall-cmd --permanent --ipset="${IPSET_NAME}" \
+        --add-entries-from-file="${DESIRED_FILE}" >/dev/null
+}
+
+attach_to_drop_zone() {
+    if ! drop_source_attached; then
+        log "attaching ipset:${IPSET_NAME} to zone ${FIREWALLD_ZONE}"
+        firewall-cmd --permanent --zone="${FIREWALLD_ZONE}" \
+            --add-source="ipset:${IPSET_NAME}" >/dev/null
+    fi
+}
+
+main() {
+    log "countries: ${COUNTRIES}"
+    fetch_zones
+    build_desired_entries
+
+    local new_hash old_hash="" need_apply=0
+    new_hash="$(desired_hash)"
+    [[ -f "${STATE_FILE}" ]] && old_hash="$(cat "${STATE_FILE}")"
+
+    if [[ "${FORCE}" -eq 1 ]]; then
+        log "force mode: rebuilding ipset"
+        need_apply=1
+    elif ! ipset_exists; then
+        log "ipset ${IPSET_NAME} missing: building"
+        need_apply=1
+    elif [[ "${new_hash}" != "${old_hash}" ]]; then
+        log "entry set changed (old=${old_hash:-<none>} new=${new_hash}): rebuilding"
+        need_apply=1
+    else
+        log "entry set unchanged; verifying drop-zone binding only"
+    fi
+
+    if [[ "${need_apply}" -eq 1 ]]; then
+        delete_ipset
+        create_ipset
+        populate_ipset
+        attach_to_drop_zone
+        firewall-cmd --reload >/dev/null
+        echo "${new_hash}" > "${STATE_FILE}"
+        echo "CHANGED"
+    else
+        if ! drop_source_attached; then
+            attach_to_drop_zone
+            firewall-cmd --reload >/dev/null
+            echo "CHANGED"
+        else
+            echo "UNCHANGED"
+        fi
+    fi
+}
+
+main "$@"

@@ -1,0 +1,10 @@
+*.retry
+*.pyc
+__pycache__/
+.cache/
+.molecule/
+.tox/
+.venv/
+.idea/
+.vscode/
+*.swp

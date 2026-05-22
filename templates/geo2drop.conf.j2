@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+# /etc/geo2drop/geo2drop.conf
+# Consumed by {{ geo2drop_bin_path }}. Re-render via ansible-role-geo2drop.
+
+COUNTRIES="{{ geo2drop_countries | join(' ') }}"
+
+IPSET_NAME="{{ geo2drop_ipset_name }}"
+IPSET_TYPE="{{ geo2drop_ipset_type }}"
+IPSET_FAMILY="{{ geo2drop_ipset_family }}"
+IPSET_MAXELEM="{{ geo2drop_ipset_maxelem }}"
+IPSET_HASHSIZE="{{ geo2drop_ipset_hashsize }}"
+
+FIREWALLD_ZONE="{{ geo2drop_firewalld_zone }}"
+
+# online | archive | local
+SOURCE_MODE="{{ geo2drop_source }}"
+
+IPDENY_URL="{{ geo2drop_ipdeny_url }}"
+GITHUB_ARCHIVE_URL="{{ geo2drop_github_archive_url }}"
+ARCHIVE_FALLBACK_GITHUB="{{ 'true' if geo2drop_archive_fallback_github else 'false' }}"
+DOWNLOAD_TIMEOUT="{{ geo2drop_download_timeout }}"
+
+STATE_DIR="{{ geo2drop_state_dir }}"
+ZONES_DIR="{{ geo2drop_zones_dir }}"
+ARCHIVE_DIR="{{ geo2drop_archive_dir }}"

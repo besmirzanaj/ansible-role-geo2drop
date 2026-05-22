@@ -1,0 +1,16 @@
+---
+- name: Apply geo2drop on edge hosts
+  hosts: edge_hosts
+  become: true
+  roles:
+    - role: ansible-role-geo2drop
+      vars:
+        geo2drop_countries:
+          - br
+          - cn
+          - in
+          - id
+          - ru
+        geo2drop_source: archive
+        geo2drop_schedule_calendar: "Mon *-*-* 03:00:00"
+        geo2drop_schedule_randomized_delay: 30m

@@ -1,0 +1,14 @@
+---
+- name: Run geo2drop refresh script
+  ansible.builtin.command:
+    cmd: >-
+      {{ geo2drop_bin_path }}
+      {% if geo2drop_force_recreate | bool %}--force{% endif %}
+  register: geo2drop_refresh_result
+  changed_when: "'CHANGED' in geo2drop_refresh_result.stdout"
+  failed_when: geo2drop_refresh_result.rc != 0
+
+- name: Show refresh script output
+  ansible.builtin.debug:
+    var: geo2drop_refresh_result.stdout_lines
+    verbosity: 1

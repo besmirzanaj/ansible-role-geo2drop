@@ -1,0 +1,29 @@
+---
+- name: Create geo2drop directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ geo2drop_config_dir }}"
+    - "{{ geo2drop_state_dir }}"
+    - "{{ geo2drop_zones_dir }}"
+    - "{{ geo2drop_archive_dir }}"
+
+- name: Render geo2drop configuration
+  ansible.builtin.template:
+    src: geo2drop.conf.j2
+    dest: "{{ geo2drop_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy geo2drop refresh script
+  ansible.builtin.template:
+    src: geo2drop-refresh.sh.j2
+    dest: "{{ geo2drop_bin_path }}"
+    owner: root
+    group: root
+    mode: "0750"

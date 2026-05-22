@@ -1,0 +1,30 @@
+---
+- name: Assert supported platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.os_family == 'RedHat'
+      - ansible_facts.distribution_major_version in ['8', '9', '10']
+    fail_msg: >-
+      ansible-role-geo2drop targets Enterprise Linux 8/9/10
+      (detected {{ ansible_facts.distribution }}
+      {{ ansible_facts.distribution_major_version }}).
+
+- name: Validate source mode
+  ansible.builtin.assert:
+    that:
+      - geo2drop_source in ['online', 'archive', 'local']
+    fail_msg: "geo2drop_source must be one of: online, archive, local"
+
+- name: Install packages and ensure firewalld is running
+  ansible.builtin.import_tasks: install.yml
+
+- name: Render configuration and refresh script
+  ansible.builtin.import_tasks: configure.yml
+
+- name: Install systemd timer for periodic refresh
+  ansible.builtin.import_tasks: schedule.yml
+  when: geo2drop_schedule_enabled | bool
+
+- name: Apply current geo2drop state
+  ansible.builtin.import_tasks: apply.yml
+  when: geo2drop_apply_now | bool

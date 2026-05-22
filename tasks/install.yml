@@ -1,0 +1,12 @@
+---
+- name: Install required packages
+  ansible.builtin.dnf:
+    name: "{{ geo2drop_packages }}"
+    state: present
+
+- name: Ensure firewalld is enabled and running
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+  when: geo2drop_manage_firewalld | bool

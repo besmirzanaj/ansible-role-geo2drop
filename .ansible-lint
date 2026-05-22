@@ -1,0 +1,12 @@
+---
+# example-playbook.yml is a user-facing example. It references the role by its
+# distribution name; that resolves once the role is installed onto a controller
+# (e.g. under roles/), but not when ansible-lint runs from inside the role dir.
+exclude_paths:
+  - example-playbook.yml
+  - molecule/
+
+skip_list:
+  # We rely on systemd's daemon-reload via a handler triggered by template changes;
+  # adding it here would just duplicate behavior.
+  - no-handler

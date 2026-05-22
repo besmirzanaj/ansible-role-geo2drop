@@ -1,0 +1,12 @@
+{{ ansible_managed | comment(decoration='# ') }}
+[Unit]
+Description=Periodic refresh of geo2drop country IP blocklist
+
+[Timer]
+OnCalendar={{ geo2drop_schedule_calendar }}
+RandomizedDelaySec={{ geo2drop_schedule_randomized_delay }}
+Persistent={{ 'true' if geo2drop_schedule_persistent else 'false' }}
+Unit=geo2drop.service
+
+[Install]
+WantedBy=timers.target

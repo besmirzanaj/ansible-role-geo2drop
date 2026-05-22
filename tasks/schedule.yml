@@ -1,0 +1,31 @@
+---
+- name: Install geo2drop systemd service unit
+  ansible.builtin.template:
+    src: geo2drop.service.j2
+    dest: /etc/systemd/system/geo2drop.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart geo2drop timer
+
+- name: Install geo2drop systemd timer unit
+  ansible.builtin.template:
+    src: geo2drop.timer.j2
+    dest: /etc/systemd/system/geo2drop.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart geo2drop timer
+
+- name: Flush handlers so timer reflects unit changes before enabling
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start geo2drop timer
+  ansible.builtin.systemd:
+    name: geo2drop.timer
+    state: started
+    enabled: true

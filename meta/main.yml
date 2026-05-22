@@ -1,0 +1,31 @@
+---
+galaxy_info:
+  role_name: geo2drop
+  namespace: besmirzanaj
+  author: Besmir Zanaj
+  description: >-
+    Block traffic from selected countries on Enterprise Linux hosts using
+    firewalld + ipset, sourcing IP zones from ipdeny.com (with an optional
+    GitHub mirror fallback). Native Ansible port of m0zgen/geo2drop.
+  license: MIT
+  min_ansible_version: "2.14"
+
+  # "EL" covers RHEL, Rocky Linux, AlmaLinux and other Enterprise Linux rebuilds.
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+        - "10"
+
+  galaxy_tags:
+    - firewall
+    - firewalld
+    - ipset
+    - security
+    - geoip
+    - rhel
+    - rocky
+    - almalinux
+
+dependencies: []

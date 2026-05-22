@@ -1,0 +1,11 @@
+---
+# Package set required on EL targets.
+# ipset is needed even though firewalld drives it, because firewall-cmd's
+# ipset backend relies on the kernel module and userspace tools being present.
+geo2drop_packages:
+  - firewalld
+  - ipset
+  - ipset-service
+  - curl
+  - tar
+  - gzip
