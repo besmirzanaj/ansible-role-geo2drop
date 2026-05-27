@@ -3,7 +3,7 @@
   hosts: edge_hosts
   become: true
   roles:
-    - role: ansible-role-geo2drop
+    - role: besmirzanaj.geo2drop
       vars:
         geo2drop_countries:
           - br

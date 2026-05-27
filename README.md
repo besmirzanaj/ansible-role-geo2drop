@@ -4,7 +4,7 @@ Block traffic from selected countries on **Enterprise Linux 8/9/10** hosts
 (RHEL, Rocky, AlmaLinux) using **firewalld + ipset**, sourcing IP ranges from
 [ipdeny.com](https://www.ipdeny.com) with an optional GitHub-mirror fallback.
 
-This is a native Ansible port of [m0zgen/ip2drop](https://github.com/m0zgen/ip2drop).
+This is a native Ansible port of [m0zgen/geo2drop](https://github.com/m0zgen/geo2drop).
 The role installs dependencies, renders a configuration file, deploys a small
 refresh script, and schedules a systemd timer so the blocklist is rebuilt
 periodically without re-running Ansible.
@@ -63,13 +63,29 @@ Source modes:
 - **local** — operator pre-places `<country>.zone` files in
   `/var/lib/geo2drop/zones/`; the role never downloads.
 
+## Installation
+
+Install via `ansible-galaxy` with a `requirements.yml`:
+
+```yaml
+---
+roles:
+  - src: https://github.com/besmirzanaj/ansible-role-geo2drop
+    name: besmirzanaj.geo2drop
+    version: main
+```
+
+```
+ansible-galaxy role install -r requirements.yml
+```
+
 ## Example Playbook
 
 ```yaml
 - hosts: edge_hosts
   become: true
   roles:
-    - role: ansible-role-geo2drop
+    - role: besmirzanaj.geo2drop
       vars:
         geo2drop_countries: [br, cn, in, id, ru]
         geo2drop_source: archive
@@ -82,7 +98,7 @@ Run once without scheduling:
 - hosts: edge_hosts
   become: true
   roles:
-    - role: ansible-role-geo2drop
+    - role: besmirzanaj.geo2drop
       vars:
         geo2drop_schedule_enabled: false
 ```
@@ -93,7 +109,7 @@ Force a rebuild on the next run:
 - hosts: edge_hosts
   become: true
   roles:
-    - role: ansible-role-geo2drop
+    - role: besmirzanaj.geo2drop
       vars:
         geo2drop_force_recreate: true
 ```
@@ -139,5 +155,5 @@ MIT.
 
 ## Author
 
-Native Ansible port maintained by Besmir Zanaj. Upstream `geo2drop` by
-[Yevgeniy Goncharov](https://sys-adm.in).
+Native Ansible port maintained by Besmir Zanaj. Upstream:
+[m0zgen/geo2drop](https://github.com/m0zgen/geo2drop).
