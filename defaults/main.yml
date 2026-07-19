@@ -4,7 +4,12 @@ geo2drop_countries:
   - id
   - cl
 
+# Exact CIDR entries to never block, regardless of country.
+# Entries are matched verbatim against zone file entries.
+# To exclude a specific IP, use the full CIDR from the zone file.
 geo2drop_whitelist: []
+
+geo2drop_cleanup_firewalld: false
 
 geo2drop_set_name: blcountries
 geo2drop_nft_family: inet

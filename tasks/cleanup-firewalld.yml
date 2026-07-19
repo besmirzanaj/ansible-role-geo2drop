@@ -1,0 +1,37 @@
+---
+- name: Check for stale firewalld ipset from previous version
+  ansible.builtin.command:
+    cmd: firewall-cmd --permanent --get-ipsets
+  register: _geo2drop_old_ipsets
+  changed_when: false
+  failed_when: false
+  when: geo2drop_cleanup_firewalld | bool
+
+- name: Remove old ipset source binding from drop zone
+  ansible.builtin.command:
+    cmd: >-
+      firewall-cmd --permanent --zone=drop
+      --remove-source=ipset:blcountries
+  changed_when: true
+  failed_when: false
+  when:
+    - geo2drop_cleanup_firewalld | bool
+    - "'blcountries' in _geo2drop_old_ipsets.stdout"
+
+- name: Delete old ipset
+  ansible.builtin.command:
+    cmd: firewall-cmd --permanent --delete-ipset=blcountries
+  changed_when: true
+  failed_when: false
+  when:
+    - geo2drop_cleanup_firewalld | bool
+    - "'blcountries' in _geo2drop_old_ipsets.stdout"
+
+- name: Reload firewalld if changes were made
+  ansible.builtin.command:
+    cmd: firewall-cmd --reload
+  changed_when: true
+  failed_when: false
+  when:
+    - geo2drop_cleanup_firewalld | bool
+    - "'blcountries' in _geo2drop_old_ipsets.stdout"

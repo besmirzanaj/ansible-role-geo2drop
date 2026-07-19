@@ -42,7 +42,7 @@ All variables are defined in `defaults/main.yml`. The most useful ones:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `geo2drop_countries` | `[br, id, cl]` | ISO 3166-1 alpha-2 codes to block. |
-| `geo2drop_whitelist` | `[]` | IPs/CIDRs to exclude from the block set. |
+| `geo2drop_whitelist` | `[]` | Exact CIDRs to never block (verbatim match against zone entries). |
 | `geo2drop_set_name` | `blcountries` | Name of the nftables set. |
 | `geo2drop_nft_family` | `inet` | `inet` for dual-stack, `ip` for IPv4-only, `ip6` for IPv6-only. |
 | `geo2drop_source` | `online` | `online` \| `archive` \| `local`. |

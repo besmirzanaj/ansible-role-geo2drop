@@ -21,6 +21,10 @@
       - geo2drop_source in ['online', 'archive', 'local']
     fail_msg: "geo2drop_source must be one of: online, archive, local"
 
+- name: Clean up stale firewalld configuration from previous version
+  ansible.builtin.import_tasks: cleanup-firewalld.yml
+  when: geo2drop_cleanup_firewalld | bool
+
 - name: Install packages and ensure firewalld is running
   ansible.builtin.import_tasks: install.yml
 

@@ -302,7 +302,9 @@ main() {
         fi
         echo "CHANGED"
     else
-        create_table_structure
+        if [[ "${DRY_RUN}" -eq 0 ]]; then
+            create_table_structure
+        fi
         echo "UNCHANGED"
     fi
 }
