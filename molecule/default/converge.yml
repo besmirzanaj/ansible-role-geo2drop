@@ -3,8 +3,7 @@
   hosts: all
   become: true
   vars:
-    # Don't actually touch firewalld in CI containers without privileged mode.
-    geo2drop_manage_firewalld: false
+    geo2drop_manage_nftables: false
     geo2drop_apply_now: false
     geo2drop_schedule_enabled: false
   roles:
