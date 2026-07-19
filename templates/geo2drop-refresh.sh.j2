@@ -190,6 +190,16 @@ set_exists() {
     nft list set "${TABLE_FAMILY}" "${TABLE_NAME}" "$1" >/dev/null 2>&1
 }
 
+ensure_conntrack_rule() {
+    local chain_name="$1"
+    if ! nft list chain "${TABLE_FAMILY}" "${TABLE_NAME}" "${chain_name}" \
+        | grep -q "ct state established,related accept"; then
+        log "adding conntrack bypass rule to ${chain_name}"
+        nft insert rule "${TABLE_FAMILY}" "${TABLE_NAME}" "${chain_name}" \
+            "ct state established,related accept"
+    fi
+}
+
 create_table_structure() {
     log "ensuring table ${TABLE_FAMILY} ${TABLE_NAME} exists"
     nft add table "${TABLE_FAMILY}" "${TABLE_NAME}" 2>/dev/null || true
@@ -211,11 +221,15 @@ create_table_structure() {
         nft add chain "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input \
             '{ type filter hook input priority -10; policy accept; }'
         nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input \
+            "ct state established,related accept"
+        nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input \
             "ip saddr @${SET_NAME} counter drop"
         if [[ "${TABLE_FAMILY}" != "ip" ]]; then
             nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input \
                 "ip6 saddr @${SET_NAME6} counter drop"
         fi
+    else
+        ensure_conntrack_rule geo2drop_input
     fi
 
     if ! nft list chain "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward >/dev/null 2>&1; then
@@ -223,11 +237,15 @@ create_table_structure() {
         nft add chain "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward \
             '{ type filter hook forward priority -10; policy accept; }'
         nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward \
+            "ct state established,related accept"
+        nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward \
             "ip saddr @${SET_NAME} counter drop"
         if [[ "${TABLE_FAMILY}" != "ip" ]]; then
             nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward \
                 "ip6 saddr @${SET_NAME6} counter drop"
         fi
+    else
+        ensure_conntrack_rule geo2drop_forward
     fi
 }
 
