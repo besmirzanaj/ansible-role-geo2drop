@@ -2,10 +2,16 @@
 - name: Assert supported platform
   ansible.builtin.assert:
     that:
-      - ansible_facts.os_family == 'RedHat'
-      - ansible_facts.distribution_major_version in ['8', '9', '10']
+      - ansible_facts.os_family in ['RedHat', 'Debian']
+      - >
+        (ansible_facts.os_family == 'RedHat' and
+         ansible_facts.distribution_major_version in ['8', '9', '10'])
+        or
+        (ansible_facts.os_family == 'Debian' and
+         ansible_facts.distribution_major_version in ['11', '12', '13'])
     fail_msg: >-
       ansible-role-geo2drop targets Enterprise Linux 8/9/10
+      or Debian 11/12/13
       (detected {{ ansible_facts.distribution }}
       {{ ansible_facts.distribution_major_version }}).
 

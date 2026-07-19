@@ -1,7 +1,8 @@
 # ansible-role-geo2drop
 
-Block traffic from selected countries on **Enterprise Linux 8/9/10** hosts
-(RHEL, Rocky, AlmaLinux) using **firewalld + ipset**, sourcing IP ranges from
+Block traffic from selected countries on **Enterprise Linux 8/9/10** and
+**Debian 11/12/13** hosts (RHEL, Rocky, AlmaLinux, Debian) using
+**firewalld + ipset**, sourcing IP ranges from
 [ipdeny.com](https://www.ipdeny.com) with an optional GitHub-mirror fallback.
 
 This is a native Ansible port of [m0zgen/geo2drop](https://github.com/m0zgen/geo2drop).
@@ -29,7 +30,7 @@ changed.
 
 ## Requirements
 
-- Target host: RHEL/Rocky/AlmaLinux 8, 9, or 10.
+- Target host: RHEL/Rocky/AlmaLinux 8, 9, 10 or Debian 11, 12, 13.
 - Ansible 2.14+ on the controller.
 - Outbound HTTPS to `www.ipdeny.com` (or `github.com` if archive fallback
   is enabled).

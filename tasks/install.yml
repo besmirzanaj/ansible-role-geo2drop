@@ -1,6 +1,6 @@
 ---
 - name: Install required packages
-  ansible.builtin.dnf:
+  ansible.builtin.package:
     name: "{{ geo2drop_packages }}"
     state: present
 
