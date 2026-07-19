@@ -2,7 +2,7 @@
 
 Block traffic from selected countries on **Enterprise Linux 8/9/10** and
 **Debian 11/12/13** hosts (RHEL, Rocky, AlmaLinux, Debian) using
-**firewalld + ipset**, sourcing IP ranges from
+**nftables sets**, sourcing IP ranges from
 [ipdeny.com](https://www.ipdeny.com) with an optional GitHub-mirror fallback.
 
 This is a native Ansible port of [m0zgen/geo2drop](https://github.com/m0zgen/geo2drop).
@@ -12,20 +12,20 @@ periodically without re-running Ansible.
 
 ## What it does
 
-1. Installs `firewalld`, `ipset`, `curl`, `tar`, `gzip`.
-2. Enables and starts `firewalld`.
+1. Installs `nftables`, `curl`, `tar`, `gzip`.
+2. Enables and starts `nftables`.
 3. Renders `/etc/geo2drop/geo2drop.conf`.
 4. Deploys `/usr/local/sbin/geo2drop-refresh` (the worker script).
 5. Installs `geo2drop.service` + `geo2drop.timer` (weekly by default).
 6. Runs the refresh script once to apply initial state:
    - Downloads country zone files (online / archive / local).
    - Computes a sha256 over the merged entry set; if it differs from the
-     last-applied hash (or the ipset is missing), the ipset is rebuilt.
-   - Attaches the ipset to firewalld's `drop` zone.
-   - Reloads firewalld.
+     last-applied hash (or the nftables set is missing), the set is rebuilt.
+   - Creates and populates the nftables set in the `geo2drop` table.
+   - Adds a drop rule referencing the set.
 
 The refresh script is **idempotent**: subsequent runs print `UNCHANGED` and
-exit without touching firewalld unless the upstream zone data has actually
+exit without touching nftables unless the upstream zone data has actually
 changed.
 
 ## Requirements
@@ -42,15 +42,14 @@ All variables are defined in `defaults/main.yml`. The most useful ones:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `geo2drop_countries` | `[br, id, cl]` | ISO 3166-1 alpha-2 codes to block. |
-| `geo2drop_ipset_name` | `blcountries` | Name of the firewalld ipset. |
-| `geo2drop_ipset_family` | `inet` | `inet` for IPv4, `inet6` for IPv6. |
-| `geo2drop_ipset_maxelem` | `131072` | Max entries in the ipset. |
-| `geo2drop_ipset_hashsize` | `4096` | Initial hash bucket count. |
-| `geo2drop_firewalld_zone` | `drop` | Firewalld zone the ipset is bound to. |
+| `geo2drop_whitelist` | `[]` | IPs/CIDRs to exclude from the block set. |
+| `geo2drop_set_name` | `blcountries` | Name of the nftables set. |
+| `geo2drop_nft_family` | `inet` | `inet` for dual-stack, `ip` for IPv4-only, `ip6` for IPv6-only. |
 | `geo2drop_source` | `online` | `online` \| `archive` \| `local`. |
 | `geo2drop_archive_fallback_github` | `true` | If `archive` mode and ipdeny is down, use the GitHub mirror. |
 | `geo2drop_force_recreate` | `false` | Force rebuild even when entries are unchanged. |
 | `geo2drop_apply_now` | `true` | Run the refresh script once during the play. |
+| `geo2drop_manage_nftables` | `true` | Let the role manage nftables (table, chain, rules). |
 | `geo2drop_schedule_enabled` | `true` | Install the systemd timer. |
 | `geo2drop_schedule_calendar` | `weekly` | systemd `OnCalendar=` expression. |
 | `geo2drop_schedule_randomized_delay` | `1h` | Spread runs across a fleet. |
@@ -119,9 +118,8 @@ Force a rebuild on the next run:
 
 - Inspect current state on a target:
   ```
-  sudo firewall-cmd --permanent --get-ipsets
-  sudo firewall-cmd --permanent --ipset=blcountries --get-entries | head
-  sudo firewall-cmd --permanent --zone=drop --list-sources
+  sudo nft list set inet geo2drop blcountries
+  sudo nft list ruleset inet geo2drop
   ```
 - Trigger an out-of-cycle refresh:
   ```
@@ -132,22 +130,21 @@ Force a rebuild on the next run:
   ```
   sudo /usr/local/sbin/geo2drop-refresh --force
   ```
-- Remove everything: set `geo2drop_schedule_enabled: false`, run, then
-  manually delete the ipset:
+- Remove everything: set `geo2drop_schedule_enabled: false`, `geo2drop_manage_nftables: false`, run, then
+  manually delete the nftables table:
   ```
-  sudo firewall-cmd --permanent --zone=drop --remove-source=ipset:blcountries
-  sudo firewall-cmd --permanent --delete-ipset=blcountries
-  sudo firewall-cmd --reload
+  sudo nft delete table inet geo2drop
   ```
 
 ## Notes on idempotency
 
-`firewall-cmd --add-entries-from-file` is not idempotent on its own. To avoid
-churn (and unnecessary firewalld reloads), the refresh script:
+`nft add element` is not idempotent on its own (duplicate entries are silently
+accepted). To avoid churn (and unnecessary nftables reloads), the refresh
+script:
 
 1. Builds a sorted, de-duplicated entry file from the country zones.
 2. Hashes it (sha256) and compares against `/var/lib/geo2drop/applied.sha256`.
-3. Only rebuilds the ipset when the hash differs or the ipset is missing.
+3. Only rebuilds the nftables set when the hash differs or the set is missing.
 4. Emits `CHANGED` / `UNCHANGED` so Ansible's `changed_when` is accurate.
 
 ## License
