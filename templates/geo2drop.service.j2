@@ -1,10 +1,10 @@
 {{ ansible_managed | comment(decoration='# ') }}
 [Unit]
-Description=geo2drop: refresh firewalld ipset of country IP ranges
-Documentation=https://github.com/m0zgen/geo2drop
-After=network-online.target firewalld.service
+Description=geo2drop: refresh nftables set of country IP ranges
+Documentation=https://github.com/besmirzanaj/ansible-role-geo2drop
+After=network-online.target nftables.service
 Wants=network-online.target
-Requires=firewalld.service
+Requires=nftables.service
 
 [Service]
 Type=oneshot

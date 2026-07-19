@@ -9,8 +9,6 @@ geo2drop_countries:
 # To exclude a specific IP, use the full CIDR from the zone file.
 geo2drop_whitelist: []
 
-geo2drop_cleanup_firewalld: false
-
 geo2drop_set_name: blcountries
 geo2drop_nft_family: inet
 

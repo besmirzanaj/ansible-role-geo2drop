@@ -5,7 +5,10 @@ Block traffic from selected countries on **Enterprise Linux 8/9/10**,
 **nftables sets**, sourcing IP ranges from
 [ipdeny.com](https://www.ipdeny.com) with an optional GitHub-mirror fallback.
 
-This is a native Ansible port of [m0zgen/geo2drop](https://github.com/m0zgen/geo2drop).
+This role started as a native Ansible port of [m0zgen/geo2drop](https://github.com/m0zgen/geo2drop)
+but has since been substantially rewritten: the backend was moved from
+firewalld+ipset to nftables sets, and the role now supports Debian and Ubuntu
+alongside Enterprise Linux.
 The role installs dependencies, renders a configuration file, deploys a small
 refresh script, and schedules a systemd timer so the blocklist is rebuilt
 periodically without re-running Ansible.
@@ -46,6 +49,10 @@ All variables are defined in `defaults/main.yml`. The most useful ones:
 | `geo2drop_set_name` | `blcountries` | Name of the nftables set. |
 | `geo2drop_nft_family` | `inet` | `inet` for dual-stack, `ip` for IPv4-only, `ip6` for IPv6-only. |
 | `geo2drop_source` | `online` | `online` \| `archive` \| `local`. |
+| `geo2drop_ipdeny_url` | `https://www.ipdeny.com` | Base URL for ipdeny.com zone downloads. |
+| `geo2drop_ipdeny_url6` | `https://www.ipdeny.com/ipv6/ipaddresses/blocks` | Base URL for ipdeny.com IPv6 zone downloads. |
+| `geo2drop_github_archive_url` | `https://github.com/.../all-zones.tar.gz` | GitHub mirror for archive fallback. |
+| `geo2drop_download_timeout` | `30` | Timeout in seconds per HTTP request. |
 | `geo2drop_archive_fallback_github` | `true` | If `archive` mode and ipdeny is down, use the GitHub mirror. |
 | `geo2drop_force_recreate` | `false` | Force rebuild even when entries are unchanged. |
 | `geo2drop_apply_now` | `true` | Run the refresh script once during the play. |
@@ -53,6 +60,7 @@ All variables are defined in `defaults/main.yml`. The most useful ones:
 | `geo2drop_schedule_enabled` | `true` | Install the systemd timer. |
 | `geo2drop_schedule_calendar` | `weekly` | systemd `OnCalendar=` expression. |
 | `geo2drop_schedule_randomized_delay` | `1h` | Spread runs across a fleet. |
+| `geo2drop_schedule_persistent` | `true` | Catch up on missed timer events (systemd `Persistent=`). |
 
 Source modes:
 
@@ -118,7 +126,8 @@ Force a rebuild on the next run:
 
 - Inspect current state on a target:
   ```
-  sudo nft list set inet geo2drop blcountries
+  sudo nft list set inet geo2drop blcountries     # IPv4
+  sudo nft list set inet geo2drop blcountries6    # IPv6
   sudo nft list ruleset inet geo2drop
   ```
 - Trigger an out-of-cycle refresh:
@@ -130,6 +139,10 @@ Force a rebuild on the next run:
   ```
   sudo /usr/local/sbin/geo2drop-refresh --force
   ```
+- Dry-run what the refresh script would do:
+  ```
+  sudo /usr/local/sbin/geo2drop-refresh --dry-run
+  ```
 - Remove everything: set `geo2drop_schedule_enabled: false`, `geo2drop_manage_nftables: false`, run, then
   manually delete the nftables table:
   ```
@@ -138,13 +151,12 @@ Force a rebuild on the next run:
 
 ## Notes on idempotency
 
-`nft add element` is not idempotent on its own (duplicate entries are silently
-accepted). To avoid churn (and unnecessary nftables reloads), the refresh
-script:
+The refresh script uses `nft -f` to flush and re-populate the sets atomically.
+To avoid unnecessary nftables operations when nothing has changed, it:
 
 1. Builds a sorted, de-duplicated entry file from the country zones.
 2. Hashes it (sha256) and compares against `/var/lib/geo2drop/applied.sha256`.
-3. Only rebuilds the nftables set when the hash differs or the set is missing.
+3. Only flushes and re-populates the set when the hash differs or the set is missing.
 4. Emits `CHANGED` / `UNCHANGED` so Ansible's `changed_when` is accurate.
 
 ## License
