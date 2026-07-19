@@ -13,10 +13,10 @@
         or
         (ansible_facts.os_family == 'Debian' and
          ansible_facts.distribution == 'Ubuntu' and
-         ansible_facts.distribution_major_version in ['20', '22', '24'])
+         ansible_facts.distribution_major_version in ['20', '22', '24', '26'])
     fail_msg: >-
       ansible-role-geo2drop targets Enterprise Linux 8/9/10,
-      Debian 11/12/13, or Ubuntu 20.04/22.04/24.04
+      Debian 11/12/13, or Ubuntu 20.04/22.04/24.04/26.04
       (detected {{ ansible_facts.distribution }}
       {{ ansible_facts.distribution_version }}).
 
