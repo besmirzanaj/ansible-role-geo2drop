@@ -124,6 +124,7 @@ fetch_archive() {
     mv -f "${archive}.new" "${archive}"
     log "extracting archive to ${ZONES_DIR}"
     tar -xzf "${archive}" -C "${ZONES_DIR}"
+    chown root:root "${ZONES_DIR}"
 }
 
 fetch_zones() {
