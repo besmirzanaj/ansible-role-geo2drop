@@ -42,6 +42,7 @@ fi
 : "${TABLE_NAME:=geo2drop}"
 : "${SOURCE_MODE:=online}"
 : "${IPDENY_URL:=https://www.ipdeny.com}"
+: "${IPDENY_URL6:=https://www.ipdeny.com/ipv6/ipaddresses/blocks}"
 : "${GITHUB_ARCHIVE_URL:=https://github.com/besmirzanaj/geo2drop/raw/data/all-zones.tar.gz}"
 : "${ARCHIVE_FALLBACK_GITHUB:=true}"
 : "${DOWNLOAD_TIMEOUT:=30}"
@@ -92,10 +93,12 @@ fetch_online() {
     done
     if [[ "${TABLE_FAMILY}" != "ip" ]]; then
         for country in ${COUNTRIES}; do
-            url="${IPDENY_URL}/ipv6/ipblocks/data/countries/${country}.zone"
+            url="${IPDENY_URL6}/${country}.zone"
             log "downloading ${country} IPv6 from ${url}"
             if ! curl -sSf --max-time "${DOWNLOAD_TIMEOUT}" "${url}" -o "${ZONES_DIR}/${country}.zone6.new"; then
-                die "failed to download IPv6 ${url}"
+                log "WARN: failed to download IPv6 ${url}; skipping IPv6 for ${country}"
+                rm -f "${ZONES_DIR}/${country}.zone6.new"
+                continue
             fi
             mv -f "${ZONES_DIR}/${country}.zone6.new" "${ZONES_DIR}/${country}.zone6"
         done

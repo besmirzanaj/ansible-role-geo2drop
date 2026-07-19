@@ -20,6 +20,9 @@ galaxy_info:
     - name: Debian
       versions:
         - "all"
+    - name: Ubuntu
+      versions:
+        - "all"
 
   galaxy_tags:
     - firewall

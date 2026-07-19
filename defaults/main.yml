@@ -17,6 +17,7 @@ geo2drop_nft_family: inet
 geo2drop_source: online
 
 geo2drop_ipdeny_url: "https://www.ipdeny.com"
+geo2drop_ipdeny_url6: "https://www.ipdeny.com/ipv6/ipaddresses/blocks"
 geo2drop_github_archive_url: "https://github.com/besmirzanaj/geo2drop/raw/data/all-zones.tar.gz"
 
 geo2drop_archive_fallback_github: true

@@ -8,12 +8,17 @@
          ansible_facts.distribution_major_version in ['8', '9', '10'])
         or
         (ansible_facts.os_family == 'Debian' and
+         ansible_facts.distribution == 'Debian' and
          ansible_facts.distribution_major_version in ['11', '12', '13'])
+        or
+        (ansible_facts.os_family == 'Debian' and
+         ansible_facts.distribution == 'Ubuntu' and
+         ansible_facts.distribution_major_version in ['20', '22', '24'])
     fail_msg: >-
-      ansible-role-geo2drop targets Enterprise Linux 8/9/10
-      or Debian 11/12/13
+      ansible-role-geo2drop targets Enterprise Linux 8/9/10,
+      Debian 11/12/13, or Ubuntu 20.04/22.04/24.04
       (detected {{ ansible_facts.distribution }}
-      {{ ansible_facts.distribution_major_version }}).
+      {{ ansible_facts.distribution_version }}).
 
 - name: Validate source mode
   ansible.builtin.assert:
