@@ -4,9 +4,9 @@
     name: "{{ geo2drop_packages }}"
     state: present
 
-- name: Ensure firewalld is enabled and running
+- name: Ensure nftables is enabled and running
   ansible.builtin.systemd:
-    name: firewalld
+    name: nftables
     state: started
     enabled: true
-  when: geo2drop_manage_firewalld | bool
+  when: geo2drop_manage_nftables | bool
