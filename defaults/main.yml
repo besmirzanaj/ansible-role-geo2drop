@@ -1,37 +1,23 @@
 ---
-# Countries to block. ISO 3166-1 alpha-2 codes, lowercase.
 geo2drop_countries:
   - br
   - id
   - cl
 
-# ipset settings (firewalld-managed).
-geo2drop_ipset_name: blcountries
-geo2drop_ipset_type: "hash:net"
-geo2drop_ipset_family: inet           # inet | inet6
-geo2drop_ipset_maxelem: 131072
-geo2drop_ipset_hashsize: 4096
+geo2drop_whitelist: []
 
-# Where the ipset is attached.
-geo2drop_firewalld_zone: drop
+geo2drop_set_name: blcountries
+geo2drop_nft_family: inet
 
-# Source mode for zone data:
-#   online  - download per-country .zone files from ipdeny.com on every refresh
-#   archive - download all-zones.tar.gz once and extract
-#   local   - operator places zone files in {{ geo2drop_zones_dir }} themselves
 geo2drop_source: online
 
-# Upstream URLs.
 geo2drop_ipdeny_url: "https://www.ipdeny.com"
-geo2drop_github_archive_url: "https://github.com/m0zgen/geo2drop/raw/data/all-zones.tar.gz"
+geo2drop_github_archive_url: "https://github.com/besmirzanaj/geo2drop/raw/data/all-zones.tar.gz"
 
-# In archive mode, fall back to the GitHub mirror if ipdeny.com is unreachable.
 geo2drop_archive_fallback_github: true
 
-# Network timeouts (seconds) for downloads on the target host.
 geo2drop_download_timeout: 30
 
-# On-disk layout on the managed host.
 geo2drop_config_dir: /etc/geo2drop
 geo2drop_state_dir: /var/lib/geo2drop
 geo2drop_zones_dir: "{{ geo2drop_state_dir }}/zones"
@@ -39,17 +25,12 @@ geo2drop_archive_dir: "{{ geo2drop_state_dir }}/archive"
 geo2drop_bin_path: /usr/local/sbin/geo2drop-refresh
 geo2drop_config_path: "{{ geo2drop_config_dir }}/geo2drop.conf"
 
-# Force ipset to be deleted and rebuilt on this run, even if the entry set is unchanged.
 geo2drop_force_recreate: false
-
-# Apply the initial state during the Ansible run.
 geo2drop_apply_now: true
 
-# Periodic refresh via systemd timer.
 geo2drop_schedule_enabled: true
-geo2drop_schedule_calendar: weekly        # systemd OnCalendar=
-geo2drop_schedule_randomized_delay: 1h    # spread runs across the fleet
-geo2drop_schedule_persistent: true        # catch up if the host was off
+geo2drop_schedule_calendar: weekly
+geo2drop_schedule_randomized_delay: 1h
+geo2drop_schedule_persistent: true
 
-# Ensure firewalld is enabled and running.
-geo2drop_manage_firewalld: true
+geo2drop_manage_nftables: true
