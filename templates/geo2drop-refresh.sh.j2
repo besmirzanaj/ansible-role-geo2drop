@@ -1,37 +1,27 @@
 #!/bin/bash
-# {{ ansible_managed }}
-# geo2drop-refresh - reconcile a firewalld ipset of country IP ranges.
-#
-# Native port of m0zgen/geo2drop. Reads /etc/geo2drop/geo2drop.conf, fetches
-# zone data (online/archive/local), and rebuilds the ipset + drop-zone binding
-# only when the desired entry set differs from what is currently applied.
-#
-# Exit codes:
-#   0  - success
-#   1  - configuration / dependency / network failure
-#
-# Prints "CHANGED" or "UNCHANGED" on the last stdout line so Ansible can mark
-# the task changed.
-
+# {{ ansible_managed | comment(decoration='# ') }}
 set -euo pipefail
 
-CONFIG="${GEO2DROP_CONF:-/etc/geo2drop/geo2drop.conf}"
+CONFIG="${GEO2DROP_CONF:-{{ geo2drop_config_path }}}"
 FORCE=0
+DRY_RUN=0
 
 usage() {
     cat <<EOF
-Usage: $0 [--force] [--config PATH]
+Usage: $0 [--config PATH] [--force] [--dry-run]
 
-  --force            Rebuild the ipset even if entries are unchanged.
-  --config PATH      Override config path (default: ${CONFIG}).
-  -h, --help         Show this help.
+  --config PATH   Override config path (default: ${CONFIG})
+  --force         Rebuild the nftables set even if entries are unchanged
+  --dry-run       Print what would be done without modifying nftables
+  -h, --help      Show this help
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --force) FORCE=1 ;;
         --config) CONFIG="$2"; shift ;;
+        --force) FORCE=1 ;;
+        --dry-run) DRY_RUN=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
     esac
@@ -46,24 +36,25 @@ fi
 . "${CONFIG}"
 
 : "${COUNTRIES:?COUNTRIES must be set in ${CONFIG}}"
-: "${IPSET_NAME:?IPSET_NAME must be set in ${CONFIG}}"
-: "${IPSET_TYPE:=hash:net}"
-: "${IPSET_FAMILY:=inet}"
-: "${IPSET_MAXELEM:=131072}"
-: "${IPSET_HASHSIZE:=4096}"
-: "${FIREWALLD_ZONE:=drop}"
+: "${SET_NAME:=blcountries}"
+: "${SET_NAME6:=${SET_NAME}6}"
+: "${TABLE_FAMILY:=inet}"
+: "${TABLE_NAME:=geo2drop}"
 : "${SOURCE_MODE:=online}"
 : "${IPDENY_URL:=https://www.ipdeny.com}"
-: "${GITHUB_ARCHIVE_URL:=https://github.com/m0zgen/geo2drop/raw/data/all-zones.tar.gz}"
+: "${GITHUB_ARCHIVE_URL:=https://github.com/besmirzanaj/geo2drop/raw/data/all-zones.tar.gz}"
 : "${ARCHIVE_FALLBACK_GITHUB:=true}"
 : "${DOWNLOAD_TIMEOUT:=30}"
 : "${STATE_DIR:=/var/lib/geo2drop}"
 : "${ZONES_DIR:=${STATE_DIR}/zones}"
 : "${ARCHIVE_DIR:=${STATE_DIR}/archive}"
+: "${WHITELIST:=}"
 
 STATE_FILE="${STATE_DIR}/applied.sha256"
 DESIRED_FILE="$(mktemp -t geo2drop.XXXXXX)"
-trap 'rm -f "${DESIRED_FILE}"' EXIT
+DESIRED_FILE6="$(mktemp -t geo2drop6.XXXXXX)"
+NFT_FILE="$(mktemp -t geo2drop-nft.XXXXXX)"
+trap 'rm -f "${DESIRED_FILE}" "${DESIRED_FILE6}" "${NFT_FILE}"' EXIT
 
 log() { echo "[geo2drop] $*"; }
 die() { echo "[geo2drop] ERROR: $*" >&2; exit 1; }
@@ -74,17 +65,14 @@ require_cmd() {
 
 require_cmd curl
 require_cmd tar
-require_cmd firewall-cmd
-require_cmd systemctl
+require_cmd nft
 require_cmd sha256sum
 require_cmd sort
 require_cmd grep
 
 mkdir -p "${STATE_DIR}" "${ZONES_DIR}" "${ARCHIVE_DIR}"
 
-if ! systemctl -q is-active firewalld.service; then
-    die "firewalld.service is not active"
-fi
+# --- Zone fetching ---
 
 is_url_available() {
     curl -sSfI --max-time "${DOWNLOAD_TIMEOUT}" "$1" >/dev/null 2>&1
@@ -93,16 +81,25 @@ is_url_available() {
 fetch_online() {
     is_url_available "${IPDENY_URL}" \
         || die "ipdeny.com is not reachable (source=online)"
-    local country
+    local country url
     for country in ${COUNTRIES}; do
-        local url="${IPDENY_URL}/ipblocks/data/countries/${country}.zone"
-        local dest="${ZONES_DIR}/${country}.zone"
+        url="${IPDENY_URL}/ipblocks/data/countries/${country}.zone"
         log "downloading ${country} from ${url}"
-        if ! curl -sSf --max-time "${DOWNLOAD_TIMEOUT}" "${url}" -o "${dest}.new"; then
+        if ! curl -sSf --max-time "${DOWNLOAD_TIMEOUT}" "${url}" -o "${ZONES_DIR}/${country}.zone.new"; then
             die "failed to download ${url}"
         fi
-        mv -f "${dest}.new" "${dest}"
+        mv -f "${ZONES_DIR}/${country}.zone.new" "${ZONES_DIR}/${country}.zone"
     done
+    if [[ "${TABLE_FAMILY}" != "ip" ]]; then
+        for country in ${COUNTRIES}; do
+            url="${IPDENY_URL}/ipv6/ipblocks/data/countries/${country}.zone"
+            log "downloading ${country} IPv6 from ${url}"
+            if ! curl -sSf --max-time "${DOWNLOAD_TIMEOUT}" "${url}" -o "${ZONES_DIR}/${country}.zone6.new"; then
+                die "failed to download IPv6 ${url}"
+            fi
+            mv -f "${ZONES_DIR}/${country}.zone6.new" "${ZONES_DIR}/${country}.zone6"
+        done
+    fi
 }
 
 fetch_archive() {
@@ -115,15 +112,13 @@ fetch_archive() {
         log "ipdeny.com unreachable; falling back to GitHub mirror"
         src="${GITHUB_ARCHIVE_URL}"
     else
-        die "no reachable archive source (ipdeny + github both unavailable)"
+        die "no reachable archive source"
     fi
-
     log "downloading archive from ${src}"
     if ! curl -sSfL --max-time "$((DOWNLOAD_TIMEOUT * 4))" "${src}" -o "${archive}.new"; then
         die "failed to download ${src}"
     fi
     mv -f "${archive}.new" "${archive}"
-
     log "extracting archive to ${ZONES_DIR}"
     tar -xzf "${archive}" -C "${ZONES_DIR}"
 }
@@ -137,6 +132,8 @@ fetch_zones() {
     esac
 }
 
+# --- Entry building ---
+
 build_desired_entries() {
     local country missing=0
     : > "${DESIRED_FILE}"
@@ -147,8 +144,7 @@ build_desired_entries() {
             missing=$((missing + 1))
             continue
         fi
-        # Strip comments and blank lines.
-        grep -Ev '^[[:space:]]*(#|$)' "${f}" >> "${DESIRED_FILE}" || true
+        grep -Ev '^[[:space:]]*(#|$)' "${f}" | sed "s/$/,/" >> "${DESIRED_FILE}" || true
     done
     if [[ ! -s "${DESIRED_FILE}" ]]; then
         die "no entries collected (${missing} country file(s) missing)"
@@ -156,95 +152,158 @@ build_desired_entries() {
     sort -u -o "${DESIRED_FILE}" "${DESIRED_FILE}"
 }
 
-desired_hash() { sha256sum "${DESIRED_FILE}" | awk '{print $1}'; }
-
-ipset_exists() {
-    firewall-cmd --permanent --get-ipsets 2>/dev/null \
-        | tr ' ' '\n' | grep -Fxq "${IPSET_NAME}"
-}
-
-drop_source_attached() {
-    firewall-cmd --permanent --zone="${FIREWALLD_ZONE}" --list-sources 2>/dev/null \
-        | tr ' ' '\n' | grep -Fxq "ipset:${IPSET_NAME}"
-}
-
-delete_ipset() {
-    if drop_source_attached; then
-        log "detaching ipset:${IPSET_NAME} from zone ${FIREWALLD_ZONE}"
-        firewall-cmd --permanent --zone="${FIREWALLD_ZONE}" \
-            --remove-source="ipset:${IPSET_NAME}" >/dev/null
-        firewall-cmd --reload >/dev/null
-    fi
-    if ipset_exists; then
-        log "deleting ipset ${IPSET_NAME}"
-        firewall-cmd --permanent --delete-ipset="${IPSET_NAME}" >/dev/null
-        firewall-cmd --reload >/dev/null
+build_desired_entries6() {
+    local country missing=0 f
+    : > "${DESIRED_FILE6}"
+    for country in ${COUNTRIES}; do
+        f="${ZONES_DIR}/${country}.zone6"
+        if [[ ! -s "${f}" ]]; then
+            log "WARN: IPv6 zone file missing for '${country}' (${f})"
+            missing=$((missing + 1))
+            continue
+        fi
+        grep -Ev '^[[:space:]]*(#|$)' "${f}" | sed "s/$/,/" >> "${DESIRED_FILE6}" || true
+    done
+    if [[ -s "${DESIRED_FILE6}" ]]; then
+        sort -u -o "${DESIRED_FILE6}" "${DESIRED_FILE6}"
     fi
 }
 
-create_ipset() {
-    log "creating ipset ${IPSET_NAME} (${IPSET_TYPE}, family=${IPSET_FAMILY}, hashsize=${IPSET_HASHSIZE}, maxelem=${IPSET_MAXELEM})"
-    firewall-cmd --permanent \
-        --new-ipset="${IPSET_NAME}" \
-        --type="${IPSET_TYPE}" \
-        --option="family=${IPSET_FAMILY}" \
-        --option="hashsize=${IPSET_HASHSIZE}" \
-        --option="maxelem=${IPSET_MAXELEM}" >/dev/null
-    firewall-cmd --reload >/dev/null
+filter_whitelist() {
+    local cidr
+    for cidr in ${WHITELIST}; do
+        sed -i "\|^${cidr},$|d" "${DESIRED_FILE}" 2>/dev/null || true
+        sed -i "\|^${cidr},$|d" "${DESIRED_FILE6}" 2>/dev/null || true
+    done
 }
 
-populate_ipset() {
-    log "loading $(wc -l < "${DESIRED_FILE}") entries into ${IPSET_NAME}"
-    firewall-cmd --permanent --ipset="${IPSET_NAME}" \
-        --add-entries-from-file="${DESIRED_FILE}" >/dev/null
+# --- Nftables management ---
+
+table_exists() {
+    nft list table "${TABLE_FAMILY}" "${TABLE_NAME}" >/dev/null 2>&1
 }
 
-attach_to_drop_zone() {
-    if ! drop_source_attached; then
-        log "attaching ipset:${IPSET_NAME} to zone ${FIREWALLD_ZONE}"
-        firewall-cmd --permanent --zone="${FIREWALLD_ZONE}" \
-            --add-source="ipset:${IPSET_NAME}" >/dev/null
+set_exists() {
+    nft list set "${TABLE_FAMILY}" "${TABLE_NAME}" "$1" >/dev/null 2>&1
+}
+
+create_table_structure() {
+    log "ensuring table ${TABLE_FAMILY} ${TABLE_NAME} exists"
+    nft add table "${TABLE_FAMILY}" "${TABLE_NAME}" 2>/dev/null || true
+
+    if ! set_exists "${SET_NAME}"; then
+        log "creating set ${SET_NAME}"
+        nft add set "${TABLE_FAMILY}" "${TABLE_NAME}" "${SET_NAME}" \
+            '{ type ipv4_addr; flags interval; auto-merge; }'
+    fi
+
+    if [[ "${TABLE_FAMILY}" != "ip" ]] && ! set_exists "${SET_NAME6}"; then
+        log "creating set ${SET_NAME6}"
+        nft add set "${TABLE_FAMILY}" "${TABLE_NAME}" "${SET_NAME6}" \
+            '{ type ipv6_addr; flags interval; auto-merge; }'
+    fi
+
+    if ! nft list chain "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input >/dev/null 2>&1; then
+        log "creating chain geo2drop_input"
+        nft add chain "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input \
+            '{ type filter hook input priority -10; policy accept; }'
+        nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input \
+            "ip saddr @${SET_NAME} counter drop"
+        if [[ "${TABLE_FAMILY}" != "ip" ]]; then
+            nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_input \
+                "ip6 saddr @${SET_NAME6} counter drop"
+        fi
+    fi
+
+    if ! nft list chain "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward >/dev/null 2>&1; then
+        log "creating chain geo2drop_forward"
+        nft add chain "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward \
+            '{ type filter hook forward priority -10; policy accept; }'
+        nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward \
+            "ip saddr @${SET_NAME} counter drop"
+        if [[ "${TABLE_FAMILY}" != "ip" ]]; then
+            nft add rule "${TABLE_FAMILY}" "${TABLE_NAME}" geo2drop_forward \
+                "ip6 saddr @${SET_NAME6} counter drop"
+        fi
     fi
 }
+
+populate_set() {
+    local set_name="$1"
+    local data_file="$2"
+    if [[ ! -s "${data_file}" ]]; then
+        log "no entries to load into ${set_name}; skipping"
+        return
+    fi
+    log "populating ${set_name} from $(wc -l < "${data_file}") entries"
+    {
+        echo "flush set ${TABLE_FAMILY} ${TABLE_NAME} ${set_name}"
+        echo "add element ${TABLE_FAMILY} ${TABLE_NAME} ${set_name} {"
+        cat "${data_file}"
+        echo "}"
+    } > "${NFT_FILE}"
+
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        log "DRY RUN: would apply nft ruleset from ${NFT_FILE}"
+        cat "${NFT_FILE}"
+    else
+        nft -f "${NFT_FILE}"
+    fi
+}
+
+desired_hash() {
+    {
+        sed 's/,$//' "${DESIRED_FILE}"
+        [[ -s "${DESIRED_FILE6}" ]] && sed 's/,$//' "${DESIRED_FILE6}"
+    } | sha256sum | awk '{print $1}'
+}
+
+# --- Main ---
 
 main() {
     log "countries: ${COUNTRIES}"
+    if [[ -n "${WHITELIST}" ]]; then
+        log "whitelist: ${WHITELIST}"
+    fi
     fetch_zones
     build_desired_entries
+    if [[ "${TABLE_FAMILY}" != "ip" ]]; then
+        build_desired_entries6
+    fi
+    filter_whitelist
 
     local new_hash old_hash="" need_apply=0
     new_hash="$(desired_hash)"
     [[ -f "${STATE_FILE}" ]] && old_hash="$(cat "${STATE_FILE}")"
 
     if [[ "${FORCE}" -eq 1 ]]; then
-        log "force mode: rebuilding ipset"
+        log "force mode: rebuilding nftables set"
         need_apply=1
-    elif ! ipset_exists; then
-        log "ipset ${IPSET_NAME} missing: building"
+    elif ! table_exists || ! set_exists "${SET_NAME}"; then
+        log "nftables table or set missing: building"
         need_apply=1
     elif [[ "${new_hash}" != "${old_hash}" ]]; then
         log "entry set changed (old=${old_hash:-<none>} new=${new_hash}): rebuilding"
         need_apply=1
     else
-        log "entry set unchanged; verifying drop-zone binding only"
+        log "entry set unchanged; verifying table structure only"
     fi
 
     if [[ "${need_apply}" -eq 1 ]]; then
-        delete_ipset
-        create_ipset
-        populate_ipset
-        attach_to_drop_zone
-        firewall-cmd --reload >/dev/null
-        echo "${new_hash}" > "${STATE_FILE}"
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+            log "DRY RUN: would rebuild set with ${new_hash}"
+        else
+            create_table_structure
+            populate_set "${SET_NAME}" "${DESIRED_FILE}"
+            if [[ "${TABLE_FAMILY}" != "ip" ]]; then
+                populate_set "${SET_NAME6}" "${DESIRED_FILE6}"
+            fi
+            echo "${new_hash}" > "${STATE_FILE}"
+        fi
         echo "CHANGED"
     else
-        if ! drop_source_attached; then
-            attach_to_drop_zone
-            firewall-cmd --reload >/dev/null
-            echo "CHANGED"
-        else
-            echo "UNCHANGED"
-        fi
+        create_table_structure
+        echo "UNCHANGED"
     fi
 }
 
